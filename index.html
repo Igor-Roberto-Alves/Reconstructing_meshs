@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Surface Reconstruction — BPA & Poisson</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0b0e1a;
+      --surface: #131728;
+      --surface2: #1c2236;
+      --border: rgba(99,119,200,.18);
+      --accent: #4f7cff;
+      --accent2: #a56fff;
+      --text: #e2e8f8;
+      --muted: #7a84a8;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --error: #f87171;
+      --radius: 14px;
+      --sidebar: 310px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; overflow: hidden; }
+
+    #app { display: flex; height: 100vh; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: var(--sidebar);
+      min-width: var(--sidebar);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 20px 16px 16px;
+      gap: 16px;
+    }
+    #sidebar::-webkit-scrollbar { width: 4px; }
+    #sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-orb {
+      width: 34px; height: 34px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #6d9eff, #4f7cff 50%, #2b3e8c);
+      box-shadow: 0 0 18px rgba(79,124,255,.5);
+      flex-shrink: 0;
+    }
+    .logo h1 { font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; }
+    .logo p { font-size: .7rem; color: var(--muted); font-weight: 400; }
+
+    .section { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+    .section h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 12px; }
+
+    /* ── Drop zone ── */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 24px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    #drop-zone:hover, #drop-zone.drag-over { border-color: var(--accent); background: rgba(79,124,255,.06); }
+    #drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    #drop-zone .drop-icon { font-size: 2rem; margin-bottom: 6px; }
+    #drop-zone .drop-text { font-size: .82rem; color: var(--muted); }
+    #drop-zone .drop-text strong { color: var(--accent); }
+    #file-name { margin-top: 8px; font-size: .75rem; color: var(--success); word-break: break-all; min-height: 1em; }
+
+    /* ── Controls ── */
+    .ctrl { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .ctrl label { font-size: .76rem; color: var(--muted); display: flex; justify-content: space-between; }
+    .ctrl label span { color: var(--text); }
+    .ctrl input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+    .ctrl select {
+      width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); padding: 6px 8px; font-size: .8rem; font-family: inherit; cursor: pointer;
+    }
+    .ctrl select:focus { outline: none; border-color: var(--accent); }
+
+    /* ── Buttons ── */
+    .btn {
+      width: 100%; padding: 10px; border: none; border-radius: 10px; font-family: inherit;
+      font-size: .88rem; font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s;
+    }
+    .btn:hover { opacity: .88; }
+    .btn:active { transform: scale(.98); }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+    .btn-secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+    /* ── Console ── */
+    #console {
+      background: #080c18; border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; font-size: .72rem; font-family: 'Space Grotesk', monospace;
+      max-height: 130px; overflow-y: auto; line-height: 1.5;
+    }
+    #console::-webkit-scrollbar { width: 3px; }
+    #console::-webkit-scrollbar-thumb { background: var(--border); }
+    .log-info  { color: var(--muted); }
+    .log-ok    { color: var(--success); }
+    .log-warn  { color: var(--warning); }
+    .log-err   { color: var(--error); }
+    .log-step  { color: var(--accent); }
+
+    /* ── Main viewer ── */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #canvas-wrap { flex: 1; position: relative; }
+    #canvas-wrap canvas { display: block; }
+
+    /* ── Tabs ── */
+    #tabs {
+      position: absolute;
+      top: 14px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px;
+      background: rgba(11,14,26,.82);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 30px;
+      padding: 5px;
+      z-index: 10;
+    }
+    .tab-btn {
+      padding: 6px 18px; border-radius: 22px; border: none;
+      font-family: inherit; font-size: .8rem; font-weight: 600;
+      cursor: pointer; transition: background .15s, color .15s;
+      background: transparent; color: var(--muted);
+    }
+    .tab-btn.active { background: var(--accent); color: #fff; }
+    .tab-btn:disabled { opacity: .3; cursor: not-allowed; }
+
+    /* ── Stats ── */
+    #stats {
+      position: absolute;
+      bottom: 14px; right: 14px;
+      background: rgba(11,14,26,.82);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      display: flex; gap: 20px; z-index: 10;
+    }
+    .stat { text-align: center; }
+    .stat-label { font-size: .62rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .stat-value { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+
+    /* ── Overlay ── */
+    #overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 5; pointer-events: none;
+      transition: opacity .3s;
+    }
+    #overlay.hidden { opacity: 0; }
+    .overlay-card {
+      background: rgba(19,23,40,.95);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 36px; text-align: center; max-width: 380px;
+    }
+    .overlay-card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .overlay-card p { font-size: .82rem; color: var(--muted); line-height: 1.6; }
+    .overlay-card .formats { margin-top: 12px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    .fmt-badge {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 3px 10px; font-size: .72rem; color: var(--accent);
+      font-family: 'Space Grotesk', monospace;
+    }
+
+    /* ── Progress spinner ── */
+    #progress-wrap {
+      position: absolute; inset: 0;
+      background: rgba(11,14,26,.7);
+      backdrop-filter: blur(4px);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 20; display: none;
+    }
+    .spinner {
+      width: 52px; height: 52px;
+      border: 4px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #progress-text { font-size: .9rem; color: var(--text); }
+
+    /* ── Download row ── */
+    #download-row {
+      position: absolute; bottom: 14px; left: 14px;
+      display: flex; gap: 8px; z-index: 10;
+    }
+    .dl-btn {
+      padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: rgba(11,14,26,.82); backdrop-filter: blur(10px);
+      color: var(--text); font-family: inherit; font-size: .76rem;
+      font-weight: 600; cursor: pointer; transition: border-color .15s;
+      display: none;
+    }
+    .dl-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Legend ── */
+    #legend {
+      position: absolute; top: 14px; left: 14px;
+      background: rgba(11,14,26,.82); backdrop-filter: blur(12px);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 10px 12px; z-index: 10; display: none;
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; font-size: .73rem; color: var(--muted); margin-bottom: 4px; }
+    .legend-item:last-child { margin-bottom: 0; }
+    .lc { width: 10px; height: 10px; border-radius: 2px; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+    <div class="logo">
+      <div class="logo-orb"></div>
+      <div>
+        <h1>3D Reconstruct</h1>
+        <p>BPA &amp; Poisson Surface Reconstruction</p>
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="section">
+      <h2>Point Cloud</h2>
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept=".xyz,.txt,.pts,.ply,.csv">
+        <div class="drop-icon">📂</div>
+        <div class="drop-text">Drop file or <strong>click to browse</strong></div>
+        <div class="drop-text" style="font-size:.68rem;margin-top:4px">Supported: .xyz .pts .ply .csv .txt</div>
+      </div>
+      <div id="file-name"></div>
+    </div>
+
+    <!-- BPA params -->
+    <div class="section">
+      <h2>Ball Pivoting (BPA)</h2>
+      <div class="ctrl">
+        <label>Ball Radius <span id="lbl-radius">auto</span></label>
+        <input type="range" id="sl-radius" min="0" max="1" step="0.01" value="0">
+      </div>
+      <div class="ctrl">
+        <label>Max Triangles <span id="lbl-maxtri">50 000</span></label>
+        <input type="range" id="sl-maxtri" min="5000" max="100000" step="5000" value="50000">
+      </div>
+    </div>
+
+    <!-- Poisson params -->
+    <div class="section">
+      <h2>Poisson Reconstruction</h2>
+      <div class="ctrl">
+        <label>Octree Depth <span id="lbl-depth">6</span></label>
+        <input type="range" id="sl-depth" min="4" max="8" step="1" value="6">
+      </div>
+    </div>
+
+    <!-- Algorithm & limit -->
+    <div class="section">
+      <h2>Run Settings</h2>
+      <div class="ctrl">
+        <label>Algorithm</label>
+        <select id="sel-algo">
+          <option value="both" selected>Both (BPA + Poisson)</option>
+          <option value="bpa">Ball Pivoting only</option>
+          <option value="poisson">Poisson only</option>
+        </select>
+      </div>
+      <div class="ctrl">
+        <label>Max Points (server) <span id="lbl-maxpt">5 000</span></label>
+        <input type="range" id="sl-maxpt" min="500" max="15000" step="500" value="5000">
+      </div>
+      <button class="btn btn-primary" id="btn-run" disabled>Run Reconstruction</button>
+    </div>
+
+    <!-- Visualization -->
+    <div class="section">
+      <h2>Visualization</h2>
+      <div class="ctrl">
+        <label>Point Cloud Color</label>
+        <select id="sel-ptcolor">
+          <option value="normal">By Normal</option>
+          <option value="height">By Height</option>
+          <option value="flat">Flat Red</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-secondary" id="btn-show-pts" style="flex:1;padding:7px">Points</button>
+        <button class="btn btn-secondary" id="btn-show-mesh" style="flex:1;padding:7px">Mesh</button>
+        <button class="btn btn-secondary" id="btn-show-wire" style="flex:1;padding:7px">Wire</button>
+      </div>
+    </div>
+
+    <!-- Console -->
+    <div class="section" style="flex:1">
+      <h2>Log</h2>
+      <div id="console"><span class="log-info">Upload a point cloud to begin.</span></div>
+    </div>
+  </aside>
+
+  <!-- ── Main viewer ── -->
+  <main id="main">
+    <div id="canvas-wrap"></div>
+
+    <!-- Overlay when empty -->
+    <div id="overlay">
+      <div class="overlay-card">
+        <h2>3D Surface Reconstruction</h2>
+        <p>Upload a point cloud file to reconstruct a mesh using the <strong>Ball Pivoting Algorithm</strong> and <strong>Poisson Surface Reconstruction</strong>.</p>
+        <div class="formats">
+          <span class="fmt-badge">.xyz</span>
+          <span class="fmt-badge">.pts</span>
+          <span class="fmt-badge">.ply</span>
+          <span class="fmt-badge">.csv</span>
+          <span class="fmt-badge">.txt</span>
+        </div>
+        <p style="margin-top:14px;font-size:.74rem">
+          Format: one point per line —<br>
+          <code style="color:var(--accent)">x y z</code> &nbsp;or&nbsp;
+          <code style="color:var(--accent)">x y z nx ny nz</code>
+        </p>
+      </div>
+    </div>
+
+    <!-- Algorithm tabs -->
+    <div id="tabs">
+      <button class="tab-btn active" data-tab="bpa" disabled>Ball Pivoting</button>
+      <button class="tab-btn" data-tab="poisson" disabled>Poisson</button>
+      <button class="tab-btn" data-tab="points" disabled>Point Cloud</button>
+    </div>
+
+    <!-- Stats -->
+    <div id="stats">
+      <div class="stat"><div class="stat-label">Points</div><div class="stat-value" id="sv-pts">—</div></div>
+      <div class="stat"><div class="stat-label">Vertices</div><div class="stat-value" id="sv-verts">—</div></div>
+      <div class="stat"><div class="stat-label">Triangles</div><div class="stat-value" id="sv-tris">—</div></div>
+    </div>
+
+    <!-- Legend -->
+    <div id="legend">
+      <div class="legend-item"><span class="lc" style="background:#4f7cff"></span>Mesh Faces</div>
+      <div class="legend-item"><span class="lc" style="background:#a56fff"></span>Wireframe</div>
+      <div class="legend-item"><span class="lc" style="background:#f87171"></span>Points</div>
+    </div>
+
+    <!-- Download buttons -->
+    <div id="download-row">
+      <button class="dl-btn" id="dl-bpa">⬇ BPA .obj</button>
+      <button class="dl-btn" id="dl-poisson">⬇ Poisson .obj</button>
+    </div>
+
+    <!-- Progress overlay -->
+    <div id="progress-wrap">
+      <div class="spinner"></div>
+      <div id="progress-text">Processing…</div>
+    </div>
+  </main>
+</div>
+
+<!-- Three.js r128 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+// ── Three.js Scene Setup ──────────────────────────────────────────────────────
+const wrap = document.getElementById('canvas-wrap');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0x0b0e1a, 1);
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000);
+camera.position.set(0, 0, 3);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const dir1 = new THREE.DirectionalLight(0xaaccff, 1.0);
+dir1.position.set(5, 8, 5);
+scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0xffa060, 0.4);
+dir2.position.set(-5, -3, -5);
+scene.add(dir2);
+
+// Resize handler
+function onResize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(onResize).observe(wrap);
+onResize();
+
+// Animate loop
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const state = {
+  bpaMesh: null,
+  poissonMesh: null,
+  pointCloud: null,
+  bpaData: null,
+  poissonData: null,
+  currentTab: 'bpa',
+  showMesh: true,
+  showWire: false,
+  showPts: false,
+  file: null,
+};
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+const consoleEl = document.getElementById('console');
+function log(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `log-${type}`;
+  el.textContent = msg;
+  consoleEl.appendChild(el);
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function setProgress(visible, text = 'Processing…') {
+  const pw = document.getElementById('progress-wrap');
+  pw.style.display = visible ? 'flex' : 'none';
+  document.getElementById('progress-text').textContent = text;
+}
+
+function setStats(pts, verts, tris) {
+  document.getElementById('sv-pts').textContent = pts != null ? pts.toLocaleString() : '—';
+  document.getElementById('sv-verts').textContent = verts != null ? verts.toLocaleString() : '—';
+  document.getElementById('sv-tris').textContent = tris != null ? tris.toLocaleString() : '—';
+}
+
+function enableTabs(bpa, poisson, pts) {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if (b.dataset.tab === 'bpa')     b.disabled = !bpa;
+    if (b.dataset.tab === 'poisson') b.disabled = !poisson;
+    if (b.dataset.tab === 'points')  b.disabled = !pts;
+  });
+}
+
+// ── Geometry helpers ──────────────────────────────────────────────────────────
+function buildMesh(data, color = 0x4f7cff) {
+  const geo = new THREE.BufferGeometry();
+  const verts = new Float32Array(data.vertices);
+  const idxs  = new Uint32Array(data.faces);
+  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  geo.setIndex(new THREE.BufferAttribute(idxs, 1));
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshPhongMaterial({
+    color, side: THREE.DoubleSide,
+    shininess: 60, transparent: true, opacity: 0.85,
+  });
+  const wire = new THREE.MeshBasicMaterial({
+    color: 0xa56fff, wireframe: true, transparent: true, opacity: 0.15,
+  });
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(geo, mat));
+  group.add(new THREE.Mesh(geo, wire));
+  return group;
+}
+
+function buildPoints(pts, colorMode = 'normal') {
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(pts.flat ? pts : pts.reduce((a, p) => (a.push(...p), a), []));
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+
+  let colors;
+  if (colorMode === 'height') {
+    const ys = Array.from({length: pos.length / 3}, (_, i) => pos[i*3+1]);
+    const mn = Math.min(...ys), mx = Math.max(...ys);
+    colors = new Float32Array(pos.length);
+    for (let i = 0; i < ys.length; i++) {
+      const t = (ys[i] - mn) / (mx - mn + 1e-9);
+      colors[i*3]   = t;
+      colors[i*3+1] = 0.4;
+      colors[i*3+2] = 1 - t;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
+
+  const mat = new THREE.PointsMaterial({
+    size: 0.012,
+    color: colorMode === 'flat' ? 0xf87171 : 0xffffff,
+    vertexColors: colorMode === 'height',
+    sizeAttenuation: true,
+  });
+  return new THREE.Points(geo, mat);
+}
+
+function centerAndScale(group) {
+  const box = new THREE.Box3().setFromObject(group);
+  const c = box.getCenter(new THREE.Vector3());
+  const s = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(s.x, s.y, s.z) || 1;
+  group.position.sub(c);
+  group.scale.setScalar(2 / maxDim);
+}
+
+// ── Scene management ──────────────────────────────────────────────────────────
+function clearScene() {
+  [state.bpaMesh, state.poissonMesh, state.pointCloud].forEach(o => {
+    if (o) scene.remove(o);
+  });
+  state.bpaMesh = state.poissonMesh = state.pointCloud = null;
+}
+
+function showTab(tab) {
+  state.currentTab = tab;
+  if (state.bpaMesh)     state.bpaMesh.visible     = (tab === 'bpa');
+  if (state.poissonMesh) state.poissonMesh.visible  = (tab === 'poisson');
+  if (state.pointCloud)  state.pointCloud.visible   = (tab === 'points');
+
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+
+  // Update stats
+  if (tab === 'bpa' && state.bpaData) {
+    setStats(state.bpaData._pts, state.bpaData.vertex_count, state.bpaData.face_count);
+  } else if (tab === 'poisson' && state.poissonData) {
+    setStats(state.poissonData._pts, state.poissonData.vertex_count, state.poissonData.face_count);
+  } else if (tab === 'points' && state.pointCloud) {
+    const n = state.pointCloud.geometry.attributes.position.count;
+    setStats(n, null, null);
+  }
+}
+
+// ── Slider labels ──────────────────────────────────────────────────────────────
+const sliders = {
+  'sl-radius':  v => v == 0 ? 'auto' : parseFloat(v).toFixed(2),
+  'sl-maxtri':  v => parseInt(v).toLocaleString(),
+  'sl-depth':   v => v,
+  'sl-maxpt':   v => parseInt(v).toLocaleString(),
+};
+Object.entries(sliders).forEach(([id, fmt]) => {
+  const sl = document.getElementById(id);
+  const lbl = document.getElementById('lbl-' + id.replace('sl-', ''));
+  if (sl && lbl) {
+    sl.addEventListener('input', () => lbl.textContent = fmt(sl.value));
+  }
+});
+
+// ── File upload ───────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const fileNameEl = document.getElementById('file-name');
+const btnRun = document.getElementById('btn-run');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+function handleFile(file) {
+  state.file = file;
+  fileNameEl.textContent = `✓ ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+  btnRun.disabled = false;
+  log(`File loaded: ${file.name}`, 'ok');
+}
+
+// ── Tab buttons ───────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => !b.disabled && showTab(b.dataset.tab));
+});
+
+// ── Visualization toggles ─────────────────────────────────────────────────────
+document.getElementById('btn-show-mesh').addEventListener('click', () => {
+  [state.bpaMesh, state.poissonMesh].forEach(g => {
+    if (g) { const m = g.children[0]; m.visible = !m.visible; }
+  });
+});
+document.getElementById('btn-show-wire').addEventListener('click', () => {
+  [state.bpaMesh, state.poissonMesh].forEach(g => {
+    if (g) { const w = g.children[1]; w.visible = !w.visible; }
+  });
+});
+document.getElementById('btn-show-pts').addEventListener('click', () => {
+  if (state.pointCloud) state.pointCloud.visible = !state.pointCloud.visible;
+});
+
+// ── Download OBJ ──────────────────────────────────────────────────────────────
+function downloadObj(data, filename) {
+  const verts = data.vertices, faces = data.faces;
+  const lines = [`# ${filename}`, `# ${data.vertex_count} vertices, ${data.face_count} faces`, ''];
+  for (let i = 0; i < verts.length; i += 3)
+    lines.push(`v ${verts[i].toFixed(6)} ${verts[i+1].toFixed(6)} ${verts[i+2].toFixed(6)}`);
+  lines.push('');
+  for (let i = 0; i < faces.length; i += 3)
+    lines.push(`f ${faces[i]+1} ${faces[i+1]+1} ${faces[i+2]+1}`);
+  const blob = new Blob([lines.join('\n')], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+document.getElementById('dl-bpa').addEventListener('click', () => {
+  if (state.bpaData) downloadObj(state.bpaData, 'bpa_mesh.obj');
+});
+document.getElementById('dl-poisson').addEventListener('click', () => {
+  if (state.poissonData) downloadObj(state.poissonData, 'poisson_mesh.obj');
+});
+
+// ── Run reconstruction ────────────────────────────────────────────────────────
+btnRun.addEventListener('click', async () => {
+  if (!state.file) return;
+  btnRun.disabled = true;
+  setProgress(true, 'Uploading & processing…');
+  document.getElementById('overlay').classList.add('hidden');
+  log('Sending to server…', 'step');
+
+  const form = new FormData();
+  form.append('file', state.file);
+  form.append('algorithm', document.getElementById('sel-algo').value);
+  form.append('bpa_radius', document.getElementById('sl-radius').value);
+  form.append('poisson_depth', document.getElementById('sl-depth').value);
+  form.append('max_points', document.getElementById('sl-maxpt').value);
+
+  let result;
+  try {
+    const resp = await fetch('/reconstruct', { method: 'POST', body: form });
+    result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Server error');
+  } catch (err) {
+    log(`Error: ${err.message}`, 'err');
+    setProgress(false);
+    btnRun.disabled = false;
+    return;
+  }
+
+  log(`Server processed ${result.point_count} points.`, 'ok');
+  clearScene();
+
+  // Build point cloud (re-read file for display)
+  const ptsGroup = new THREE.Group();
+  try {
+    const text = await state.file.text();
+    const pts = parseXYZText(text);
+    if (pts.length > 0) {
+      const pcMesh = buildPoints(pts, document.getElementById('sel-ptcolor').value);
+      ptsGroup.add(pcMesh);
+      centerAndScale(ptsGroup);
+      scene.add(ptsGroup);
+      state.pointCloud = ptsGroup;
+    }
+  } catch (_) {}
+
+  let hasBpa = false, hasPoisson = false;
+
+  if (result.bpa && !result.bpa.error) {
+    result.bpa._pts = result.point_count;
+    state.bpaData = result.bpa;
+    const g = buildMesh(result.bpa, 0x4f7cff);
+    centerAndScale(g);
+    scene.add(g);
+    state.bpaMesh = g;
+    hasBpa = true;
+    log(`BPA: ${result.bpa.face_count} triangles, ${result.bpa.vertex_count} vertices. Radius=${result.bpa_radius_used?.toFixed(4)}`, 'ok');
+    document.getElementById('dl-bpa').style.display = 'inline-block';
+  } else if (result.bpa?.error) {
+    log(`BPA failed: ${result.bpa.error.split('\n')[0]}`, 'err');
+  }
+
+  if (result.poisson && !result.poisson.error) {
+    result.poisson._pts = result.point_count;
+    state.poissonData = result.poisson;
+    const g = buildMesh(result.poisson, 0x34d399);
+    centerAndScale(g);
+    scene.add(g);
+    state.poissonMesh = g;
+    hasPoisson = true;
+    log(`Poisson: ${result.poisson.face_count} triangles, ${result.poisson.vertex_count} vertices.`, 'ok');
+    document.getElementById('dl-poisson').style.display = 'inline-block';
+  } else if (result.poisson?.error) {
+    log(`Poisson failed: ${result.poisson.error.split('\n')[0]}`, 'err');
+  }
+
+  enableTabs(hasBpa, hasPoisson, state.pointCloud != null);
+  document.getElementById('legend').style.display = 'block';
+
+  // Choose initial tab
+  const firstTab = hasBpa ? 'bpa' : hasPoisson ? 'poisson' : 'points';
+  if (state.bpaMesh)     state.bpaMesh.visible     = false;
+  if (state.poissonMesh) state.poissonMesh.visible  = false;
+  if (state.pointCloud)  state.pointCloud.visible   = false;
+  showTab(firstTab);
+
+  setProgress(false);
+  btnRun.disabled = false;
+  log('Done.', 'ok');
+});
+
+// ── Minimal XYZ parser (browser-side for point cloud display) ─────────────────
+function parseXYZText(text) {
+  const pts = [];
+  for (const line of text.split('\n')) {
+    const s = line.trim();
+    if (!s || s.startsWith('#')) continue;
+    const parts = s.replace(/,/g, ' ').split(/\s+/);
+    if (parts.length < 3) continue;
+    const x = parseFloat(parts[0]), y = parseFloat(parts[1]), z = parseFloat(parts[2]);
+    if (isFinite(x) && isFinite(y) && isFinite(z)) pts.push(x, y, z);
+  }
+  return pts;
+}
+</script>
+</body>
+</html>
